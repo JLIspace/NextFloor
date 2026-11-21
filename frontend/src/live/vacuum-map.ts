@@ -30,6 +30,19 @@ export interface VacuumLive {
   path: [number, number][][];
 }
 
+/** Roborock publishes the map rooms on an image entity and the live pose on a separate sensor. */
+function mapAttributes(hass: HomeAssistant, id: string | null): Record<string, unknown> | undefined {
+  if (!id) return;
+  const state = hass.states[id];
+  if (!state) return;
+  if (id.startsWith("image.") && id.endsWith("_map")) {
+    const live = hass.states[`sensor.${id.slice(6, -4)}_live_map`]?.attributes;
+    if (live && live.position_x !== undefined && live.position_y !== undefined)
+      return { ...state.attributes, vacuum_position: { x: live.position_x, y: live.position_y, a: live.angle } };
+  }
+  return state.attributes;
+}
+
 const num = (v: unknown): number => Number(v);
 
 /** A map position as a pair: the robot writes `{x, y}` for itself and `[x, y]` in its trail. */
@@ -68,6 +81,12 @@ export function mapCamera(hass: HomeAssistant): string | null {
     if (!id.startsWith("camera.")) continue;
     // where the robot is, or where it docks: either says this camera carries a robot's map
     if (positionOf(st.attributes) ?? dockOf(st.attributes)) return id;
+  }
+  // Roborock separates map rooms (image.*_map) from the live robot pose (sensor.*_live_map).
+  for (const [id, st] of Object.entries(hass.states)) {
+    if (!id.startsWith("image.") || !id.endsWith("_map")) continue;
+    const live = hass.states[`sensor.${id.slice(6, -4)}_live_map`]?.attributes;
+    if (live && live.position_x !== undefined && live.position_y !== undefined && st.attributes.rooms) return id;
   }
   // no map camera: a tracker with the robot's coordinates (Roomba+) is a position source on its own
   for (const [id, st] of Object.entries(hass.states)) if (id.startsWith("device_tracker.") && positionOf(st.attributes)) return id;
@@ -120,7 +139,7 @@ export function gridTurn(cal: VacuumCalibration | null | undefined): number | nu
  */
 export function readVacuum(hass: HomeAssistant, camera: string | null, cal: VacuumCalibration | null | undefined): VacuumLive | null {
   if (!camera) return null;
-  const attributes = hass.states[camera]?.attributes;
+  const attributes = mapAttributes(hass, camera);
   if (!attributes) return null;
   const toPlan = gridMapper(cal) ?? ((g: [number, number]) => g);
   const turn = gridTurn(cal) ?? 0;
@@ -176,7 +195,7 @@ const MIN_BASELINE = 1.5;
 
 /** Where the robot and its dock are in the map's grid, which is what a calibration is built from. */
 export function gridPlaces(hass: HomeAssistant, camera: string | null): { at: [number, number] | null; dock: [number, number] | null } {
-  const attributes = camera ? hass.states[camera]?.attributes : undefined;
+  const attributes = mapAttributes(hass, camera);
   return {
     at: positionOf(attributes),
     dock: dockOf(attributes),
@@ -208,7 +227,7 @@ export interface GridRoom {
  * a room without a name cannot be matched to the plan, so it is left out.
  */
 export function gridRooms(hass: HomeAssistant, camera: string | null): GridRoom[] {
-  const raw = camera ? hass.states[camera]?.attributes?.rooms : undefined;
+  const raw = mapAttributes(hass, camera)?.rooms;
   if (!raw || typeof raw !== "object") return [];
   const out: GridRoom[] = [];
   for (const r of Object.values(raw as Record<string, unknown>)) {

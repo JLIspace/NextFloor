@@ -76,7 +76,8 @@ async function currentPlaces(host: EditorHost): Promise<{ at: [number, number] |
   if (!host.hass || !camera) return { at: null, dock: null };
   const stamp = () => {
     const attributes = host.hass?.states[camera]?.attributes ?? {};
-    return `${String(attributes.render_count ?? "")}|${JSON.stringify(attributes.vacuum_position ?? null)}`;
+    const live = camera.startsWith("image.") && camera.endsWith("_map") ? host.hass?.states[`sensor.${camera.slice(6, -4)}_live_map`]?.attributes : undefined;
+    return `${String(attributes.render_count ?? "")}|${JSON.stringify(attributes.vacuum_position ?? null)}|${String(live?.position_x ?? "")},${String(live?.position_y ?? "")}`;
   };
   const before = stamp();
   try {
